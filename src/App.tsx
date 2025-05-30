@@ -138,7 +138,7 @@ const CameraComponent: React.FC = () => {
     };
   }, [stream]);
 
-  // Check permissions on mount
+  // Check permissions and auto-start camera on mount
   useEffect(() => {
     if (navigator.permissions) {
       navigator.permissions.query({ name: 'camera' as PermissionName })
@@ -147,12 +147,41 @@ const CameraComponent: React.FC = () => {
           result.addEventListener('change', () => {
             setPermissions(result.state as PermissionState);
           });
+          
+          // Auto-start camera if permissions are already granted
+          if (result.state === 'granted') {
+            startCamera();
+          }
         })
         .catch(() => {
           // Permissions API not supported, keep default
         });
     }
   }, []);
+
+  // Auto-start camera with user interaction fallback
+  useEffect(() => {
+    const handleUserInteraction = () => {
+      if (!isActive && !isLoading && permissions !== 'denied') {
+        startCamera();
+      }
+      // Remove listeners after first interaction
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('touchstart', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
+    };
+
+    // Add interaction listeners for auto-start
+    document.addEventListener('click', handleUserInteraction);
+    document.addEventListener('touchstart', handleUserInteraction);
+    document.addEventListener('keydown', handleUserInteraction);
+
+    return () => {
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('touchstart', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
+    };
+  }, [isActive, isLoading, permissions]);
 
   if (!hasCamera) {
     return (
@@ -233,6 +262,15 @@ const CameraComponent: React.FC = () => {
                   </p>
                 )}
               </div>
+            </div>
+          )}
+          
+          {/* Auto-start message */}
+          {!isActive && !error && !isLoading && (
+            <div className="mb-4 p-3 bg-blue-100 border border-blue-300 rounded-lg">
+              <p className="text-blue-700 text-sm">
+                📸 Camera will start automatically. If it doesn't, click the "Start Camera" button below or anywhere on the page.
+              </p>
             </div>
           )}
           
