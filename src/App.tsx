@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, CameraOff, RotateCcw, AlertCircle } from 'lucide-react';
 
 // Type definitions
 type FacingMode = 'user' | 'environment';
@@ -8,38 +7,25 @@ type PermissionState = 'granted' | 'denied' | 'prompt';
 interface CameraConstraints {
   video: {
     facingMode: FacingMode;
-    width: { ideal: number; max: number };
-    height: { ideal: number; max: number };
-    aspectRatio: { ideal: number };
   };
   audio: boolean;
 }
 
-interface BasicConstraints {
-  video: boolean;
-  audio: boolean;
-}
-
-const CameraComponent: React.FC = () => {
+const SimpleCameraComponent: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isActive, setIsActive] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
-  const [facingMode, setFacingMode] = useState<FacingMode>('user'); // 'user' for front, 'environment' for back
+  const [facingMode, setFacingMode] = useState<FacingMode>('user');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [permissions, setPermissions] = useState<PermissionState>('prompt');
 
-  // Check if device has camera capabilities
+  // Check for camera support
   const hasCamera: boolean = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
-  // Get camera constraints based on facing mode
+  // Camera constraints
   const getConstraints = (facing: FacingMode): CameraConstraints => ({
-    video: {
-      facingMode: facing,
-      width: { ideal: 1280, max: 1920 },
-      height: { ideal: 720, max: 1080 },
-      aspectRatio: { ideal: 16/9 }
-    },
+    video: { facingMode: facing },
     audio: false
   });
 
@@ -54,9 +40,21 @@ const CameraComponent: React.FC = () => {
     setError('');
 
     try {
-      // Stop existing stream if any
+      // Check permissions
+      const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+      setPermissions(permissionStatus.state);
+      if (permissionStatus.state === 'denied') {
+        setError('Camera access denied. Please allow camera permissions.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Stop existing stream
       if (stream) {
-        stream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+        stream.getTracks().forEach((track: MediaStreamTrack) => {
+          track.stop();
+          track.enabled = false;
+        });
       }
 
       const constraints = getConstraints(facingMode);
@@ -65,15 +63,17 @@ const CameraComponent: React.FC = () => {
       setStream(mediaStream);
       setIsActive(true);
       setPermissions('granted');
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
+        videoRef.current.play().catch((err) => {
+          console.error('Video play error:', err);
+          setError('Failed to play video stream.');
+        });
       }
     } catch (err: unknown) {
       console.error('Camera error:', err);
-      
       const error = err as DOMException;
-      
       if (error.name === 'NotAllowedError') {
         setError('Camera access denied. Please allow camera permissions.');
         setPermissions('denied');
@@ -81,24 +81,6 @@ const CameraComponent: React.FC = () => {
         setError('No camera found on this device.');
       } else if (error.name === 'NotReadableError') {
         setError('Camera is already in use by another application.');
-      } else if (error.name === 'OverconstrainedError') {
-        setError('Camera constraints not supported. Trying basic settings...');
-        // Fallback with basic constraints
-        try {
-          const basicConstraints: BasicConstraints = { 
-            video: true, 
-            audio: false 
-          };
-          const basicStream = await navigator.mediaDevices.getUserMedia(basicConstraints);
-          setStream(basicStream);
-          setIsActive(true);
-          if (videoRef.current) {
-            videoRef.current.srcObject = basicStream;
-          }
-          setError('');
-        } catch (basicErr: unknown) {
-          setError('Unable to access camera with any settings.');
-        }
       } else {
         setError('Unable to access camera. Please try again.');
       }
@@ -110,26 +92,30 @@ const CameraComponent: React.FC = () => {
   // Stop camera
   const stopCamera = (): void => {
     if (stream) {
-      stream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+      stream.getTracks().forEach((track: MediaStreamTrack) => {
+        track.stop();
+        track.enabled = false;
+      });
       setStream(null);
     }
-    setIsActive(false);
     if (videoRef.current) {
       videoRef.current.srcObject = null;
+      videoRef.current.load();
     }
+    setIsActive(false);
+    setError('');
   };
 
-  // Switch camera (front/back)
+  // Switch camera
   const switchCamera = async (): Promise<void> => {
     const newFacingMode: FacingMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newFacingMode);
-    
     if (isActive) {
       await startCamera();
     }
   };
 
-  // Clean up on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (stream) {
@@ -138,19 +124,13 @@ const CameraComponent: React.FC = () => {
     };
   }, [stream]);
 
-  // Auto-start camera on mount
-  useEffect(() => {
-    startCamera();
-  }, []);
-
   if (!hasCamera) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full text-center">
-          <CameraOff className="mx-auto mb-4 text-gray-400" size={64} />
-          <h2 className="text-xl font-semibold text-gray-800 mb-2">Camera Not Supported</h2>
-          <p className="text-gray-600">
-            Your device or browser doesn't support camera access. Please try using a modern browser like Chrome, Firefox, Safari, or Edge.
+      <div style={styles.container}>
+        <div style={styles.errorBox}>
+          <h2 style={styles.errorTitle}>Camera Not Supported</h2>
+          <p style={styles.errorText}>
+            Your device or browser doesn't support camera access. Please use a modern browser like Chrome, Firefox, or Safari.
           </p>
         </div>
       </div>
@@ -158,108 +138,74 @@ const CameraComponent: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden max-w-4xl w-full">
+    <div style={styles.container}>
+      <div style={styles.cameraBox}>
         {/* Header */}
-        <div className="bg-gray-800 text-white p-4 flex items-center justify-between">
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <Camera size={24} />
-            Camera Access
-          </h1>
+        <div style={styles.header}>
+          <h1 style={styles.headerTitle}>Camera Access</h1>
           {isActive && (
-            <button
-              onClick={switchCamera}
-              className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
-              title="Switch Camera"
-            >
-              <RotateCcw size={20} />
+            <button onClick={switchCamera} style={styles.switchButton} title="Switch Camera">
+              ↻
             </button>
           )}
         </div>
 
         {/* Video Area */}
-        <div className="relative bg-black" style={{ aspectRatio: '16/9' }}>
+        <div style={styles.videoContainer}>
           {isActive ? (
             <video
               ref={videoRef}
               autoPlay
               playsInline
               muted
-              className="w-full h-full object-cover"
+              style={styles.video}
             />
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              <div className="text-center">
-                <Camera size={64} className="mx-auto mb-4 opacity-50" />
-                <p className="text-lg">Camera Preview</p>
-                <p className="text-sm mt-2">Click start to begin</p>
-              </div>
+            <div style={styles.placeholder}>
+              <p style={styles.placeholderText}>Camera Preview</p>
+              <p style={styles.placeholderSubtext}>Click start to begin</p>
             </div>
           )}
-          
-          {/* Loading overlay */}
           {isLoading && (
-            <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-              <div className="text-white text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
-                <p>Starting camera...</p>
-              </div>
+            <div style={styles.loadingOverlay}>
+              <div style={styles.spinner}></div>
+              <p style={styles.loadingText}>Starting camera...</p>
             </div>
           )}
         </div>
 
         {/* Controls */}
-        <div className="p-4 bg-gray-50">
+        <div style={styles.controls}>
           {error && (
-            <div className="mb-4 p-3 bg-red-100 border border-red-300 rounded-lg flex items-start gap-2">
-              <AlertCircle className="text-red-500 mt-0.5 flex-shrink-0" size={18} />
-              <div>
-                <p className="text-red-700 font-medium">Camera Error</p>
-                <p className="text-red-600 text-sm">{error}</p>
-                {permissions === 'denied' && (
-                  <p className="text-red-600 text-xs mt-1">
-                    To enable camera access, click the camera icon in your browser's address bar or check your browser settings.
-                  </p>
-                )}
-              </div>
+            <div style={styles.errorBox}>
+              <p style={styles.errorTitle}>Camera Error</p>
+              <p style={styles.errorText}>{error}</p>
+              {permissions === 'denied' && (
+                <p style={styles.errorSubtext}>
+                  To enable camera access, check your browser's camera permissions and try again.
+                </p>
+              )}
             </div>
           )}
-          
-          {/* Auto-start message */}
-          {!isActive && !error && isLoading && (
-            <div className="mb-4 p-3 bg-blue-100 border border-blue-300 rounded-lg">
-              <p className="text-blue-700 text-sm">
-                🚀 Starting camera automatically...
-              </p>
-            </div>
-          )}
-          
-          <div className="flex gap-3 justify-center">
+          <div style={styles.buttonContainer}>
             {!isActive ? (
               <button
                 onClick={startCamera}
                 disabled={isLoading}
-                className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-medium transition-colors"
+                style={isLoading ? { ...styles.button, ...styles.buttonDisabled } : styles.button}
               >
-                <Camera size={20} />
-                {isLoading ? 'Starting...' : 'Start Camera'}
+                Start Camera
               </button>
             ) : (
-              <button
-                onClick={stopCamera}
-                className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
-              >
-                <CameraOff size={20} />
+              <button onClick={stopCamera} style={styles.stopButton}>
                 Stop Camera
               </button>
             )}
           </div>
-          
-          {/* Info */}
-          <div className="mt-4 text-center text-sm text-gray-600">
-            <p>Camera facing: {facingMode === 'user' ? 'Front' : 'Back'}</p>
+          <div style={styles.info}>
+            <p>Camera: {facingMode === 'user' ? 'Front' : 'Back'}</p>
             {isActive && (
-              <p className="mt-1">
+              <p>
                 Resolution: {videoRef.current?.videoWidth || 'Unknown'} × {videoRef.current?.videoHeight || 'Unknown'}
               </p>
             )}
@@ -270,4 +216,165 @@ const CameraComponent: React.FC = () => {
   );
 };
 
-export default CameraComponent;
+// CSS styles
+const styles: { [key: string]: React.CSSProperties } = {
+  container: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: '100vh',
+    backgroundColor: '#f0f0f0',
+    padding: '20px',
+  },
+  cameraBox: {
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+    maxWidth: '800px',
+    width: '100%',
+    overflow: 'hidden',
+  },
+  header: {
+    backgroundColor: '#333',
+    color: '#fff',
+    padding: '10px 20px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    margin: 0,
+    fontSize: '18px',
+    fontWeight: '600',
+  },
+  switchButton: {
+    backgroundColor: '#555',
+    color: '#fff',
+    border: 'none',
+    padding: '8px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '16px',
+  },
+  videoContainer: {
+    position: 'relative',
+    backgroundColor: '#000',
+    aspectRatio: '16/9',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+  },
+  placeholder: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    color: '#666',
+  },
+  placeholderText: {
+    fontSize: '18px',
+    margin: '0',
+  },
+  placeholderSubtext: {
+    fontSize: '14px',
+    marginTop: '10px',
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+  },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '4px solid #fff',
+    borderTopColor: 'transparent',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+  },
+  loadingText: {
+    marginTop: '10px',
+    fontSize: '14px',
+  },
+  controls: {
+    padding: '20px',
+    backgroundColor: '#f9f9f9',
+  },
+  errorBox: {
+    backgroundColor: '#fee2e2',
+    border: '1px solid #f87171',
+    borderRadius: '4px',
+    padding: '10px',
+    marginBottom: '20px',
+  },
+  errorTitle: {
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#b91c1c',
+    margin: '0 0 5px',
+  },
+  errorText: {
+    fontSize: '14px',
+    color: '#b91c1c',
+    margin: 0,
+  },
+  errorSubtext: {
+    fontSize: '12px',
+    color: '#b91c1c',
+    marginTop: '5px',
+  },
+  buttonContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: '10px',
+  },
+  button: {
+    padding: '10px 20px',
+    backgroundColor: '#2563eb',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '4px',
+    fontSize: '16px',
+    cursor: 'pointer',
+  },
+  buttonDisabled: {
+    backgroundColor: '#93c5fd',
+    cursor: 'not-allowed',
+  },
+  stopButton: {
+    padding: '10px 20px',
+    backgroundColor: '#dc2626',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '4px',
+    fontSize: '16px',
+    cursor: 'pointer',
+  },
+  info: {
+    textAlign: 'center',
+    marginTop: '20px',
+    fontSize: '14px',
+    color: '#666',
+  },
+};
+
+const styleSheet = document.createElement('style');
+styleSheet.innerText = `
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+`;
+document.head.appendChild(styleSheet);
+
+export default SimpleCameraComponent;
