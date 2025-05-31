@@ -62,6 +62,9 @@ const SimpleCameraComponent: React.FC = () => {
       <div className="camera-wrapper">
         <video
           ref={videoRef}
+          autoPlay
+          playsInline
+          muted
           className="camera-video"
         />
         {!isStreaming && (
